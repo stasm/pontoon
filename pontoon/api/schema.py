@@ -1,3 +1,6 @@
+from dj.debug import debug as _debug
+from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Prefetch
 import graphene
 from graphene_django import DjangoObjectType
 from graphene_django.debug import DjangoDebug
@@ -32,8 +35,17 @@ class Project(DjangoObjectType, Stats):
             'approved_strings', 'fuzzy_strings'
         )
 
+    localization = graphene.Field(ProjectLocale, code=graphene.String())
     localizations = graphene.List(ProjectLocale)
 
+    @_debug
+    def resolve_localization(project, _info, code):
+        try:
+            return project.project_locale.get(locale__code=code)
+        except ObjectDoesNotExist:
+            return None
+
+    @_debug
     def resolve_localizations(obj, _info):
         return obj.project_locale.all()
 
@@ -48,6 +60,7 @@ class Locale(DjangoObjectType, Stats):
 
     localizations = graphene.List(ProjectLocale, include_disabled=graphene.Boolean(False))
 
+    @_debug
     def resolve_localizations(obj, _info, include_disabled):
         qs = obj.project_locale
 
@@ -67,9 +80,13 @@ class Query(graphene.ObjectType):
     locales = graphene.List(Locale)
     locale = graphene.Field(Locale, code=graphene.String())
 
+    @_debug
     def resolve_projects(obj, info, include_disabled):
         qs = ProjectModel.objects
         fields = get_fields(info)
+
+        if 'projects.localization' in fields:
+            qs = qs.prefetch_related('project_locale__locale')
 
         if 'projects.localizations' in fields:
             qs = qs.prefetch_related('project_locale__locale')
@@ -82,18 +99,25 @@ class Query(graphene.ObjectType):
 
         return qs.filter(disabled=False)
 
+    @_debug
     def resolve_project(obj, info, slug):
-        qs = ProjectModel.objects
+        qs = ProjectModel.objects.filter(slug=slug)
         fields = get_fields(info)
 
+        p = Prefetch('project_locale__locale')
+
+        if 'project.localization' in fields:
+            qs = qs.prefetch_related(p)
+
         if 'project.localizations' in fields:
-            qs = qs.prefetch_related('project_locale__locale')
+            qs = qs.prefetch_related(p)
 
         if 'project.localizations.locale.localizations' in fields:
             raise Exception('Cyclic queries are forbidden')
 
         return qs.get(slug=slug)
 
+    @_debug
     def resolve_locales(obj, info):
         qs = LocaleModel.objects
         fields = get_fields(info)
@@ -106,6 +130,7 @@ class Query(graphene.ObjectType):
 
         return qs.all()
 
+    @_debug
     def resolve_locale(obj, info, code):
         qs = LocaleModel.objects
         fields = get_fields(info)
